@@ -103,22 +103,40 @@ guards. See [`__tests__/`](./__tests__).
 ## 📦 Scripts
 | Script | Purpose |
 |---|---|
-| `npm run dev` | App + sync server (concurrently) |
+| `npm run dev` | App + sync server (two processes, local dev) |
 | `npm run dev:next` / `dev:sync` | Run each separately |
 | `npm run build` | Production build |
+| `npm start` | **Combined** server — Next.js + WebSocket sync in one process |
 | `npm test` | Vitest |
 
-## ☁️ Deployment
+## 🏛️ App vs sync server: two modes
+The Next.js app and the Yjs WebSocket sync engine can run two ways:
+- **Local dev** — two processes ([`server/sync-server.ts`](./server/sync-server.ts)
+  on port 4444 + `next dev` on 3000), started together by `npm run dev`.
+- **Production (combined)** — ONE process, ONE port via
+  [`server/server.ts`](./server/server.ts): Next handles HTTP, the sync engine
+  handles `WS /sync`. This is the `npm start` entrypoint, ideal for a single-host
+  deploy. The shared engine lives in [`server/sync-core.ts`](./server/sync-core.ts).
 
-- **App → Vercel.** Set `DATABASE_URL`, `JWT_SECRET`, and
-  `NEXT_PUBLIC_SYNC_URL` (your deployed sync server's `wss://` URL) as project
-  env vars. CI runs via [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
-- **Sync server → Railway / Render / Fly.** Vercel's serverless functions can't
-  hold persistent WebSocket connections, so the sync server deploys separately.
-  Run it with `npm run sync` (start command), and give it the same `DATABASE_URL`
-  and `JWT_SECRET`. Use `wss://` in production and set the auth cookie
-  `SameSite=None; Secure` if the sync server is on a different domain (the app
-  already falls back to a short-lived `?token=` for that case).
+## ☁️ Deployment (single service on Railway)
+
+Because the combined server is a long-running Node process (not serverless), the
+whole app deploys as **one Railway service** + a database.
+
+1. **MongoDB** — add a MongoDB database on Railway (or use MongoDB Atlas). Copy its
+   connection string and append the db name, e.g. `…/collab_editor`.
+2. **App service** — deploy this repo on Railway:
+   - Build command: `npm run build`
+   - Start command: `npm start` (runs the combined server)
+   - Env vars: `DATABASE_URL`, `JWT_SECRET` (any 32+ char secret).
+   - Railway injects `PORT` automatically; the server binds to it.
+   - Leave `NEXT_PUBLIC_SYNC_URL` **unset** — the client then connects to the
+     WebSocket on the same origin at `/sync` (no cross-domain config needed).
+3. Generate a public domain for the service → that's your live URL.
+
+> Prefer Vercel for the app? Then run the sync engine separately (`npm run sync`)
+> on Railway/Render and point `NEXT_PUBLIC_SYNC_URL` at its `wss://` URL. The app
+> falls back to a short-lived `?token=` so cross-domain WebSocket auth still works.
 
 ## 🔐 Security notes (assignment "Must Have")
 - **OOM / malformed payloads:** `ws` `maxPayload` rejects oversized frames before
