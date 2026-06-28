@@ -21,7 +21,7 @@ choice below is justified against that.
 | Version history / time travel without corrupting live state | Immutable `Y.encodeStateAsUpdate` snapshots; **restore = new merged update**, never a hard overwrite | `versions` table |
 | Roles: Owner / Editor / Viewer; viewers cannot push | JWT verified at WS handshake; viewer connections are read-only — server drops their `sync`/`update` messages | NextAuth + WS auth hook |
 | Reject malformed/huge payloads (OOM) | Per-message byte cap, message-rate cap, Zod schema on REST sync routes | `zod`, ws `maxPayload` |
-| Tenant isolation | Every query scoped by `documentId` + membership check; Postgres RLS-style strict ORM scoping | Prisma + guard layer |
+| Tenant isolation | Every query scoped by `documentId` + membership check (strict ODM scoping; MongoDB has no RLS) | Mongoose + guard layer |
 | AI add-on | Summarize / continue-writing / fix-grammar on selection | AI SDK (provider chosen later) |
 
 ### Why Yjs over OT or a hand-rolled merge
@@ -64,7 +64,7 @@ layer.
                      └───────────────│────────────────┘
                                      ▼
                      ┌────────────────────────────────┐
-                     │  PostgreSQL (Prisma)            │
+                     │  MongoDB (Mongoose)             │
                      │   users, documents, members,    │
                      │   doc_state, versions           │
                      └────────────────────────────────┘
@@ -72,14 +72,15 @@ layer.
 
 ---
 
-## 3. Data model (Prisma)
+## 3. Data model (Mongoose collections — see `lib/models.ts`)
 
-```prisma
-User      { id, email (unique), name, passwordHash, createdAt }
-Document  { id, title, ownerId → User, createdAt, updatedAt }
-Member    { id, documentId, userId, role (OWNER|EDITOR|VIEWER), @@unique([documentId,userId]) }
-DocState  { documentId (PK), update Bytes, stateVector Bytes, updatedAt }  // latest merged Yjs state
-Version   { id, documentId, label, snapshot Bytes, createdById, createdAt } // immutable time-travel points
+```
+User      { _id, email (unique), name, passwordHash, createdAt }
+Document  { _id, title, createdAt, updatedAt }
+Member    { _id, documentId→Document, userId→User, role (OWNER|EDITOR|VIEWER),
+            unique(documentId, userId) }
+DocState  { _id, documentId (unique), update Buffer, stateVector Buffer, updatedAt }  // merged Yjs state
+Version   { _id, documentId, label, snapshot Buffer, createdById→User, createdAt }    // immutable snapshots
 ```
 
 - **DocState** stores the merged Yjs update so the server can re-hydrate a doc and
@@ -121,7 +122,7 @@ we surface it via an explicit **connection/sync status indicator** (`offline`,
   flagged read-only; inbound `sync`/`update` messages from them are dropped server-side.
 - **Tenant isolation:** every DB access goes through a guard that requires a Member
   row for `(userId, documentId)`; no cross-document data is ever returned. (Strict
-  ORM scoping standing in for Postgres RLS.)
+  ODM scoping standing in for Row-Level Security, which MongoDB lacks.)
 - **Input validation:** Zod schemas on every API route; reject unknown fields.
 
 ---
@@ -137,15 +138,14 @@ collab-editor/
 │  └─ api/                       # auth, documents, members, versions
 ├─ components/                   # editor, toolbar, status badge, version panel, footer
 ├─ lib/
-│  ├─ db.ts                      # Prisma client
-│  ├─ auth.ts                    # NextAuth config
-│  ├─ yjs/                       # provider setup, indexeddb, snapshots
+│  ├─ db.ts                      # Mongoose connection (cached)
+│  ├─ models.ts                  # Mongoose schemas
+│  ├─ auth.ts / jwt.ts           # JWT sign/verify, session cookie
+│  ├─ collab/                    # useCollab hook, merge, snapshots
 │  ├─ guards.ts                  # membership/role checks
 │  └─ validation.ts              # Zod schemas
-├─ server/                       # standalone y-websocket sync server
-├─ prisma/schema.prisma
-├─ docker-compose.yml            # local Postgres
-└─ __tests__/ + e2e/             # sync-engine unit + Playwright
+├─ server/sync-server.ts         # standalone WebSocket sync server
+└─ __tests__/                    # sync-engine + validation unit tests
 ```
 
 ---
@@ -153,7 +153,7 @@ collab-editor/
 ## 7. Milestones
 
 1. ✅ Scaffold Next 16 + TS + Tailwind, this doc
-2. Docker Postgres + Prisma schema + migrate
+2. MongoDB + Mongoose models
 3. Auth (register/login, JWT) + roles
 4. Editor (Tiptap + Yjs + y-indexeddb) — local-first, works fully offline
 5. WS sync server with auth + viewer read-only + payload guards
