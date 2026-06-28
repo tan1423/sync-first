@@ -22,8 +22,6 @@ const dev = process.env.SERVER_DEV === "1";
 const PORT = Number(process.env.PORT ?? 3000);
 
 async function main() {
-  await connectDB();
-
   const app = next({ dev });
   await app.prepare();
   // These must be obtained AFTER prepare().
@@ -43,10 +41,19 @@ async function main() {
     upgradeNext(req, socket, head);
   });
 
+  // Listen FIRST so the host's health check passes immediately; connect to the
+  // DB in the background (Mongoose buffers queries until it's ready, and each
+  // request also ensures the connection via connectDB()).
   server.listen(PORT, () => {
     console.log(`[server] Next.js + sync listening on :${PORT} (dev=${dev})`);
     console.log(`[server] WebSocket sync path: /sync`);
   });
+
+  connectDB()
+    .then(() => console.log("[server] MongoDB connected"))
+    .catch((err) =>
+      console.error("[server] MongoDB connection failed:", err?.message ?? err),
+    );
 }
 
 main().catch((err) => {
