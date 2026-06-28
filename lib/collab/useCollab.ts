@@ -5,7 +5,19 @@ import * as Y from "yjs";
 import { IndexeddbPersistence } from "y-indexeddb";
 import { WebsocketProvider } from "y-websocket";
 
-const SYNC_URL = process.env.NEXT_PUBLIC_SYNC_URL ?? "ws://localhost:4444";
+/**
+ * Resolve the sync-server URL:
+ *  - If NEXT_PUBLIC_SYNC_URL is set, use it (local dev points to ws://localhost:4444,
+ *    or a separate sync deployment).
+ *  - Otherwise derive a same-origin "/sync" URL — this is the combined-server
+ *    (single Railway service) case, where the WebSocket lives on the app domain.
+ */
+function resolveSyncUrl(): string {
+  const explicit = process.env.NEXT_PUBLIC_SYNC_URL;
+  if (explicit && explicit.length > 0) return explicit;
+  const proto = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${proto}://${window.location.host}/sync`;
+}
 
 export type SyncStatus =
   | "offline" // no network
@@ -73,7 +85,7 @@ export function useCollab(
       }
       if (cancelled) return;
 
-      provider = new WebsocketProvider(SYNC_URL, documentId, doc, {
+      provider = new WebsocketProvider(resolveSyncUrl(), documentId, doc, {
         params: { doc: documentId, token },
         connect: true,
       });
