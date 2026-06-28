@@ -25,7 +25,9 @@ import { loadDoc, persistDoc } from "../lib/yjs-persistence";
 import { connectDB } from "../lib/db";
 import { Member, mongoose, type Role } from "../lib/models";
 
-const PORT = Number(process.env.SYNC_PORT ?? 4444);
+// Hosting platforms (Railway/Render) inject the public port via PORT — honour
+// it first; fall back to SYNC_PORT (local dev) and then a default.
+const PORT = Number(process.env.PORT ?? process.env.SYNC_PORT ?? 4444);
 const MAX_PAYLOAD = Number(process.env.SYNC_MAX_PAYLOAD_BYTES ?? 1_048_576);
 const PERSIST_DEBOUNCE_MS = 2000;
 const MSG_RATE_LIMIT = 200; // max messages per RATE_WINDOW_MS per socket
